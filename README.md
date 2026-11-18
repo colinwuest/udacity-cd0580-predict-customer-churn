@@ -38,84 +38,6 @@ Regression about 0.92.
 
 ---
 
-## Files and Data Description
-
-```
-.
-├── .github/workflows/                # CI (lint + tests), model training and release pipelines
-├── churn_library.py                  # the refactored ML pipeline (library + entry point)
-├── churn_script_logging_and_tests.py # tests + logging for every library function
-├── conftest.py                       # pytest fixtures (lets the tests run under pytest too)
-├── constants.py                      # paths, column lists, hyper-parameters, artifact names
-├── tests/                            # fast pytest unit tests on synthetic data
-│   ├── conftest.py                   #   synthetic dataset + temporary output folders
-│   └── test_churn_library.py         #   unit tests per library function
-├── churn_notebook.ipynb              # original exploratory notebook (reference solution)
-├── guide.ipynb                       # project instructions
-├── pyproject.toml / uv.lock          # project metadata + locked dependencies (uv)
-├── requirements.txt                  # pinned dependencies exported from uv.lock (pip fallback)
-├── data/bank_data.csv                # input data
-├── images/eda/                       # EDA plots (generated, git-ignored)
-├── images/results/                   # model evaluation plots (generated, git-ignored)
-├── models/                           # trained models (generated, git-ignored)
-└── logs/churn_library.log            # test/log output (generated, git-ignored)
-```
-
-### Main Files
-
-- `churn_library.py`
-  The ML pipeline as reusable functions: `import_data`, `perform_eda`,
-  `encoder_helper`, `perform_feature_engineering`, `classification_report_image`,
-  `feature_importance_plot`, `train_models` and a few plotting helpers
-  (`roc_curve_plot`, `shap_summary_plot`). Running it as a script runs the whole
-  pipeline end to end.
-
-- `churn_script_logging_and_tests.py`
-  One test per library function. Each test checks that returned objects are not
-  empty (shapes, columns, value ranges) and that expected artifacts (images, models)
-  are created. Every test logs `SUCCESS` (INFO) or `ERROR` messages to
-  `logs/churn_library.log`.
-
-- `constants.py`
-  All configuration in one place. To add a new categorical feature, append its
-  name to `CAT_COLUMNS`. Encoding, feature selection and the tests pick it up
-  automatically.
-
-- `churn_notebook.ipynb`
-  The original notebook that this project refactors. It is kept as a reference and
-  is not used by the scripts.
-
----
-
-### Data
-
-- `data/bank_data.csv`: 10,127 credit card customers, 22 columns
-  ([Kaggle: Credit Card Customers](https://www.kaggle.com/sakshigoyal7/credit-card-customers)).
-  - **Target**: `Attrition_Flag` (`Existing Customer` / `Attrited Customer`), turned into
-    the binary column `Churn`. About 16 % of customers churned.
-  - **Categorical features (5)**: `Gender`, `Education_Level`, `Marital_Status`,
-    `Income_Category`, `Card_Category`
-  - **Quantitative features (14)**: e.g. `Customer_Age`, `Credit_Limit`,
-    `Total_Trans_Amt`, `Total_Trans_Ct`, `Total_Revolving_Bal`, `Avg_Utilization_Ratio`
-  - `CLIENTNUM` is an ID and is not used as a feature. The dataset has no missing values.
-
----
-
-### Output Directories
-
-After running the project, outputs are saved to:
-
-- EDA images → `images/eda/`
-- Model results → `images/results/`
-- Models → `models/`
-- Logs → `logs/churn_library.log`
-
-These folders are **not committed** (see `.gitignore`), so a fresh clone contains
-none of them. Run the pipeline or the test script once to create them. The code
-creates every folder it needs.
-
----
-
 ## Setup
 
 The project uses [uv](https://docs.astral.sh/uv/) for Python and dependency
@@ -295,7 +217,83 @@ version. Leave **publish** unticked for a dry run that only uploads the zip as a
 build artifact.
 
 ---
+## Files and Data Description
 
+```
+.
+├── .github/workflows/                # CI (lint + tests), model training and release pipelines
+├── churn_library.py                  # the refactored ML pipeline (library + entry point)
+├── churn_script_logging_and_tests.py # tests + logging for every library function
+├── conftest.py                       # pytest fixtures (lets the tests run under pytest too)
+├── constants.py                      # paths, column lists, hyper-parameters, artifact names
+├── tests/                            # fast pytest unit tests on synthetic data
+│   ├── conftest.py                   #   synthetic dataset + temporary output folders
+│   └── test_churn_library.py         #   unit tests per library function
+├── churn_notebook.ipynb              # original exploratory notebook (reference solution)
+├── guide.ipynb                       # project instructions
+├── pyproject.toml / uv.lock          # project metadata + locked dependencies (uv)
+├── requirements.txt                  # pinned dependencies exported from uv.lock (pip fallback)
+├── data/bank_data.csv                # input data
+├── images/eda/                       # EDA plots (generated, git-ignored)
+├── images/results/                   # model evaluation plots (generated, git-ignored)
+├── models/                           # trained models (generated, git-ignored)
+└── logs/churn_library.log            # test/log output (generated, git-ignored)
+```
+
+### Main Files
+
+- `churn_library.py`
+  The ML pipeline as reusable functions: `import_data`, `perform_eda`,
+  `encoder_helper`, `perform_feature_engineering`, `classification_report_image`,
+  `feature_importance_plot`, `train_models` and a few plotting helpers
+  (`roc_curve_plot`, `shap_summary_plot`). Running it as a script runs the whole
+  pipeline end to end.
+
+- `churn_script_logging_and_tests.py`
+  One test per library function. Each test checks that returned objects are not
+  empty (shapes, columns, value ranges) and that expected artifacts (images, models)
+  are created. Every test logs `SUCCESS` (INFO) or `ERROR` messages to
+  `logs/churn_library.log`.
+
+- `constants.py`
+  All configuration in one place. To add a new categorical feature, append its
+  name to `CAT_COLUMNS`. Encoding, feature selection and the tests pick it up
+  automatically.
+
+- `churn_notebook.ipynb`
+  The original notebook that this project refactors. It is kept as a reference and
+  is not used by the scripts.
+
+---
+
+### Data
+
+- `data/bank_data.csv`: 10,127 credit card customers, 22 columns
+  ([Kaggle: Credit Card Customers](https://www.kaggle.com/sakshigoyal7/credit-card-customers)).
+  - **Target**: `Attrition_Flag` (`Existing Customer` / `Attrited Customer`), turned into
+    the binary column `Churn`. About 16 % of customers churned.
+  - **Categorical features (5)**: `Gender`, `Education_Level`, `Marital_Status`,
+    `Income_Category`, `Card_Category`
+  - **Quantitative features (14)**: e.g. `Customer_Age`, `Credit_Limit`,
+    `Total_Trans_Amt`, `Total_Trans_Ct`, `Total_Revolving_Bal`, `Avg_Utilization_Ratio`
+  - `CLIENTNUM` is an ID and is not used as a feature. The dataset has no missing values.
+
+---
+
+### Output Directories
+
+After running the project, outputs are saved to:
+
+- EDA images → `images/eda/`
+- Model results → `images/results/`
+- Models → `models/`
+- Logs → `logs/churn_library.log`
+
+These folders are **not committed** (see `.gitignore`), so a fresh clone contains
+none of them. Run the pipeline or the test script once to create them. The code
+creates every folder it needs.
+
+---
 ## Expected Outputs
 
 - Models
