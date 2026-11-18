@@ -1,0 +1,70 @@
+[project]
+name = "predict-customer-churn"
+version = "1.0.0"
+description = "Refactored, tested and logged customer churn prediction pipeline (Udacity ML DevOps)."
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "joblib>=1.4",
+    "matplotlib>=3.9",
+    "numpy>=2.0",
+    "pandas>=2.2",
+    "scikit-learn>=1.7",
+    "seaborn>=0.13",
+    "shap>=0.46",
+]
+
+[dependency-groups]
+dev = [
+    "pylint>=3.3",
+    "pytest>=8.3",
+    "ruff>=0.8",
+]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["*.ipynb"]
+
+[tool.ruff.lint]
+# pycodestyle, pyflakes, isort, pep8-naming, pydocstyle, bugbear, pyupgrade, pylint rules
+select = ["E", "W", "F", "I", "N", "D", "B", "UP", "PL"]
+ignore = [
+    "D203",     # one-blank-line-before-class (conflicts with D211)
+    "D213",     # multi-line-summary-second-line (conflicts with D212)
+    "PLR0913",  # classification_report_image needs six arrays by design
+    "PLR0917",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["PLR2004"]  # literal expected values are clearer in assertions
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.isort]
+known-first-party = ["churn_library", "constants"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.pylint.format]
+max-line-length = 100
+
+[tool.pylint."messages control"]
+disable = ["too-many-arguments", "too-many-positional-arguments"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests", "churn_script_logging_and_tests.py"]
+python_files = ["test_*.py", "churn_script_logging_and_tests.py"]
+markers = [
+    "integration: end-to-end tests on the real dataset (churn_script_logging_and_tests.py)",
+]
+filterwarnings = [
+    # tiny synthetic datasets trigger harmless sklearn metric warnings
+    "ignore::sklearn.exceptions.UndefinedMetricWarning",
+]

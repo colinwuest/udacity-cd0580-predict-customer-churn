@@ -304,7 +304,8 @@ __pypackages__/
 ### Vim ###
 # Swap
 [._]*.s[a-v][a-z]
-!*.svg  # comment out if you don't need vector files
+# comment out the next line if you don't need vector files
+!*.svg
 [._]*.sw[a-p]
 [._]s[a-rt-v][a-z]
 [._]ss[a-gi-z]
@@ -398,8 +399,22 @@ zsdoc/data
 # (for Zsh plugins using Python)
 .venv
 
-# Zunit tests' output
-/tests/_output/*
-!/tests/_output/.gitkeep
-
 # End of https://www.toptal.com/developers/gitignore/api/macos,windows,zsh,powershell,vim,emacs,visualstudiocode,pycharm,git,pythonvanilla,jupyternotebooks
+
+### Project: Predict Customer Churn ###
+# Tool caches and local environments (never commit)
+.ruff_cache/
+.pytest_cache/
+.venv/
+
+# Pipeline outputs: regenerate them with `uv run python churn_library.py`
+# (or the test script). The code recreates these folders when it runs.
+/images/
+/models/
+/logs/
+
+# Claude Code / AI assistant files (never commit)
+.claude/
+CLAUDE.md
+CLAUDE.local.md
+.codegraph/
