@@ -1,0 +1,77 @@
+# Train the churn models and publish models, plots and log as build artifacts.
+# Runs on demand, and on pushes to main that change the pipeline, its config or the data.
+name: Train models
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - churn_library.py
+      - constants.py
+      - data/**
+      - pyproject.toml
+      - uv.lock
+      - .github/workflows/train.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: train-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  train:
+    name: Train and evaluate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked --no-dev
+
+      - name: Run training pipeline
+        run: |
+          mkdir -p logs
+          uv run python churn_library.py 2>&1 | tee logs/training.log
+
+      - name: Check artifacts were created
+        run: |
+          for f in models/rfc_model.pkl models/logistic_model.pkl \
+                   images/results/roc_curve_result.png images/results/feature_importances.png; do
+            test -s "$f" || { echo "::error::missing $f"; exit 1; }
+          done
+          ls -l models images/eda images/results
+
+      - name: Summarise results
+        run: |
+          {
+            echo "## Training results"
+            echo ""
+            echo '```'
+            grep -E "Best random forest params|Saved models" logs/training.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload models
+        uses: actions/upload-artifact@v4
+        with:
+          name: models
+          path: models/*.pkl
+          retention-days: 30
+
+      - name: Upload plots and log
+        uses: actions/upload-artifact@v4
+        with:
+          name: images-and-log
+          path: |
+            images/
+            logs/training.log
+          retention-days: 30

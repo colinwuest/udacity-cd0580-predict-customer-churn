@@ -1,7 +1,10 @@
 # Predict Customer Churn
 
+[![CI](https://github.com/colinwuest/udacity-cd0580-predict-customer-churn/actions/workflows/ci.yml/badge.svg)](https://github.com/colinwuest/udacity-cd0580-predict-customer-churn/actions/workflows/ci.yml)
+[![Train models](https://github.com/colinwuest/udacity-cd0580-predict-customer-churn/actions/workflows/train.yml/badge.svg)](https://github.com/colinwuest/udacity-cd0580-predict-customer-churn/actions/workflows/train.yml)
+
 - Project **Predict Customer Churn** of the ML DevOps Engineer Nanodegree (Udacity)
-- Repository platform: **GitHub**
+- Repository platform: **GitHub** (https://github.com/colinwuest/udacity-cd0580-predict-customer-churn)
 
 ---
 
@@ -39,6 +42,7 @@ Regression about 0.92.
 
 ```
 .
+├── .github/workflows/                # CI (lint + tests) and model-training pipelines
 ├── churn_library.py                  # the refactored ML pipeline (library + entry point)
 ├── churn_script_logging_and_tests.py # tests + logging for every library function
 ├── conftest.py                       # pytest fixtures (lets the tests run under pytest too)
@@ -247,6 +251,20 @@ uv run pylint churn_library.py churn_script_logging_and_tests.py tests
 
 Both files score **10.00/10** with pylint and pass `ruff check`. The configuration
 lives in `pyproject.toml`.
+
+---
+
+### 5. CI/CD (GitHub Actions)
+
+Two workflows in `.github/workflows/` run on GitHub-hosted Ubuntu runners with uv:
+
+| Workflow | Trigger | What it does |
+|---|---|---|
+| **CI** (`ci.yml`) | every push to `main`, every pull request, manual | `lint`: `ruff format --check`, `ruff check`, pylint (fails below 8.5) → `unit-tests`: `pytest tests` on Python 3.12 and 3.13 → `integration-tests`: runs `churn_script_logging_and_tests.py` on the real data and uploads `logs/churn_library.log` as the **test-log** artifact |
+| **Train models** (`train.yml`) | manual (*Actions → Train models → Run workflow*), and pushes to `main` that change the pipeline, constants, data or dependencies | runs `churn_library.py`, checks the models and plots exist, writes the best hyper-parameters to the job summary, and uploads the **models** (`*.pkl`) and **images-and-log** artifacts (kept 30 days) |
+
+Because generated files are not committed, download the trained models and plots
+from the artifacts of the latest *Train models* run.
 
 ---
 
