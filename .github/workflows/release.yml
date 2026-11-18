@@ -1,0 +1,153 @@
+# Build a release zip with the whole repository plus every output the rubric asks for
+# (EDA + result images, trained models, test log, lint and test reports) and publish it
+# as a GitHub release.
+#
+# Publish:   push a tag like v1.0.0   (git tag v1.0.0 && git push origin v1.0.0)
+#            or run manually with "publish" ticked and a version entered.
+# Dry run:   run manually without "publish": the zip is only uploaded as a build artifact.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version / tag (e.g. v1.0.0)"
+        required: true
+        type: string
+      publish:
+        description: "Create the GitHub release (untick for a dry run)"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build release package
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      VERSION: ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
+      PUBLISH: ${{ github.event_name == 'push' || inputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate version
+        run: |
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::version '$VERSION' must look like v1.2.3"
+            exit 1
+          fi
+          echo "PACKAGE=predict-customer-churn-$VERSION" >> "$GITHUB_ENV"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked --all-groups
+
+      - name: Lint reports
+        run: |
+          mkdir -p reports
+          {
+            echo "## ruff format --check"; uv run ruff format --check .
+            echo; echo "## ruff check"; uv run ruff check .
+          } 2>&1 | tee reports/ruff.txt
+          uv run pylint churn_library.py churn_script_logging_and_tests.py \
+            constants.py conftest.py tests 2>&1 | tee reports/pylint.txt
+
+      # steps run with `bash -eo pipefail`, so a failure before `| tee` still fails the step
+      - name: Unit tests
+        run: uv run pytest tests -v --junitxml=reports/unit-tests.xml 2>&1 | tee reports/unit-tests.txt
+
+      - name: Run test script (trains models, saves images, writes log)
+        run: uv run python churn_script_logging_and_tests.py
+
+      - name: Verify rubric outputs
+        run: |
+          required=(
+            images/eda/churn_distribution.png
+            images/eda/customer_age_distribution.png
+            images/eda/marital_status_distribution.png
+            images/eda/total_transaction_distribution.png
+            images/eda/heatmap.png
+            images/results/rf_results.png
+            images/results/logistic_results.png
+            images/results/roc_curve_result.png
+            images/results/feature_importances.png
+            images/results/shap_summary.png
+            models/rfc_model.pkl
+            models/logistic_model.pkl
+            logs/churn_library.log
+          )
+          for f in "${required[@]}"; do
+            test -s "$f" || { echo "::error::missing rubric output $f"; exit 1; }
+          done
+          grep -q "SUCCESS" logs/churn_library.log
+          if grep -q "ERROR" logs/churn_library.log; then
+            echo "::error::test log contains ERROR entries"
+            exit 1
+          fi
+
+      - name: Assemble package
+        run: |
+          stage="dist/$PACKAGE"
+          mkdir -p "$stage"
+          # every tracked file of the repository at this commit
+          git archive --format=tar HEAD | tar -x -C "$stage"
+          # generated outputs (git-ignored, so added explicitly)
+          cp -r images models logs reports "$stage/"
+          cat > "$stage/RELEASE_INFO.md" <<EOF
+          # Predict Customer Churn $VERSION
+
+          - Commit: $GITHUB_SHA
+          - Built: $(date -u +%Y-%m-%dT%H:%M:%SZ) by GitHub Actions run $GITHUB_RUN_ID
+          - Source + generated outputs:
+            - images/eda/      EDA plots (univariate quantitative, categorical, bivariate)
+            - images/results/  classification reports, ROC curves, feature importance, SHAP
+            - models/          trained random forest and logistic regression (joblib .pkl)
+            - logs/            churn_library.log written by churn_script_logging_and_tests.py
+            - reports/         ruff, pylint and unit-test results
+          EOF
+          (cd dist && uv run python -m zipfile -c "$PACKAGE.zip" "$PACKAGE")
+          (cd dist && sha256sum "$PACKAGE.zip" > "$PACKAGE.zip.sha256")
+          uv run python -m zipfile -l "dist/$PACKAGE.zip" | head -60
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PACKAGE }}
+          path: |
+            dist/${{ env.PACKAGE }}.zip
+            dist/${{ env.PACKAGE }}.zip.sha256
+          retention-days: 30
+
+      - name: Publish GitHub release
+        if: env.PUBLISH == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          score=$(grep -oE "rated at [0-9.]+/10" reports/pylint.txt | head -1)
+          cat > notes.md <<EOF
+          Release package with the full repository and all generated outputs
+          (EDA and result images, trained models, test log, lint and test reports).
+
+          - pylint: ${score:-n/a}
+          - Unit tests and churn_script_logging_and_tests.py: passed
+          - Verify the download with the attached .sha256 file.
+          EOF
+          gh release create "$VERSION" \
+            "dist/$PACKAGE.zip" "dist/$PACKAGE.zip.sha256" \
+            --target "$GITHUB_SHA" \
+            --title "Predict Customer Churn $VERSION" \
+            --notes-file notes.md

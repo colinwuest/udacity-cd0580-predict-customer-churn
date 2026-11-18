@@ -42,7 +42,7 @@ Regression about 0.92.
 
 ```
 .
-├── .github/workflows/                # CI (lint + tests) and model-training pipelines
+├── .github/workflows/                # CI (lint + tests), model training and release pipelines
 ├── churn_library.py                  # the refactored ML pipeline (library + entry point)
 ├── churn_script_logging_and_tests.py # tests + logging for every library function
 ├── conftest.py                       # pytest fixtures (lets the tests run under pytest too)
@@ -256,15 +256,43 @@ lives in `pyproject.toml`.
 
 ### 5. CI/CD (GitHub Actions)
 
-Two workflows in `.github/workflows/` run on GitHub-hosted Ubuntu runners with uv:
+Three workflows in `.github/workflows/` run on GitHub-hosted Ubuntu runners with uv:
 
 | Workflow | Trigger | What it does |
 |---|---|---|
 | **CI** (`ci.yml`) | every push to `main`, every pull request, manual | `lint`: `ruff format --check`, `ruff check`, pylint (fails below 8.5) → `unit-tests`: `pytest tests` on Python 3.12 and 3.13 → `integration-tests`: runs `churn_script_logging_and_tests.py` on the real data and uploads `logs/churn_library.log` as the **test-log** artifact |
 | **Train models** (`train.yml`) | manual (*Actions → Train models → Run workflow*), and pushes to `main` that change the pipeline, constants, data or dependencies | runs `churn_library.py`, checks the models and plots exist, writes the best hyper-parameters to the job summary, and uploads the **models** (`*.pkl`) and **images-and-log** artifacts (kept 30 days) |
+| **Release** (`release.yml`) | push of a `v*` tag, or manual | lint + unit tests + test script, then builds and publishes the release zip with the repo and all rubric outputs (see below) |
 
 Because generated files are not committed, download the trained models and plots
-from the artifacts of the latest *Train models* run.
+from the artifacts of the latest *Train models* run, or from a release.
+
+#### Releases (`release.yml`)
+
+The **Release** workflow builds `predict-customer-churn-<version>.zip`. The zip contains
+every tracked file of the repository plus all outputs the rubric asks for, all
+generated fresh on the runner:
+
+| Folder in the zip | Contents |
+|---|---|
+| `images/eda/` | EDA plots (univariate quantitative, univariate categorical, bivariate) |
+| `images/results/` | classification reports, ROC curves, feature importance, SHAP summary |
+| `models/` | `rfc_model.pkl`, `logistic_model.pkl` |
+| `logs/` | `churn_library.log` written by `churn_script_logging_and_tests.py` |
+| `reports/` | `ruff.txt`, `pylint.txt` (score), `unit-tests.txt` / `.xml` |
+| `RELEASE_INFO.md` | version, commit and build details |
+
+The workflow fails if any rubric output is missing or the test log contains an
+`ERROR`. The zip and its `.sha256` checksum are attached to the GitHub release.
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0       # builds and publishes release v1.0.0
+```
+
+Alternatively, run it manually under *Actions → Release → Run workflow* and enter a
+version. Leave **publish** unticked for a dry run that only uploads the zip as a
+build artifact.
 
 ---
 
