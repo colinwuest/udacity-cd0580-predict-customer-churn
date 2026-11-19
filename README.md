@@ -333,7 +333,7 @@ creates every folder it needs.
   import pandas as pd
 
   model = joblib.load("models/rfc_model.pkl")
-  customers = pd.read_csv("new_customers.csv")      # same columns as bank_data.csv
+  customers = pd.read_csv("new_customers.csv")  # same columns as bank_data.csv
   churn_probability = model.predict_proba(customers)[:, 1]
   ```
 
