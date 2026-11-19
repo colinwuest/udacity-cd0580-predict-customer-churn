@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.pipeline import Pipeline
 
 import churn_library as cls
 import constants as const
@@ -85,37 +86,41 @@ def fixture_churn_df(csv_path):
 
 @pytest.fixture(name="split_data")
 def fixture_split_data(churn_df):
-    """Return the train/test split of the encoded synthetic data.
+    """Return the raw, stratified train/test split of the synthetic data.
 
-    The categorical columns are mean-encoded with ``encoder_helper`` and the data is
-    split with ``perform_feature_engineering`` exactly as in the real pipeline.
+    The split is made with ``perform_feature_engineering`` exactly as in the real
+    pipeline; the categorical columns are still raw strings (not encoded).
 
     Args:
         churn_df: synthetic DataFrame with ``Churn`` from the ``churn_df`` fixture
 
     Returns:
         split_data: tuple ``(x_train, x_test, y_train, y_test)`` where the ``x_*``
-            items are feature DataFrames and the ``y_*`` items are ``Churn`` Series
+            items are raw feature DataFrames and the ``y_*`` items are ``Churn`` Series
     """
-    encoded = cls.encoder_helper(churn_df, const.CAT_COLUMNS, const.RESPONSE)
-    return cls.perform_feature_engineering(encoded, const.RESPONSE)
+    return cls.perform_feature_engineering(churn_df, const.RESPONSE)
 
 
 @pytest.fixture(name="fitted_rf")
 def fixture_fitted_rf(split_data):
-    """Return a small random forest fitted on the synthetic training data.
+    """Return a small ``encode -> random forest`` pipeline fitted on the training split.
 
     Args:
         split_data: tuple ``(x_train, x_test, y_train, y_test)`` from the
             ``split_data`` fixture; only the training part is used
 
     Returns:
-        fitted_rf: fitted ``RandomForestClassifier`` (10 trees, max depth 3)
+        fitted_rf: fitted ``Pipeline`` with the ``encoder_helper`` encoder followed by a
+            ``RandomForestClassifier`` (10 trees, max depth 3); predicts from raw rows
     """
     x_train, _, y_train, _ = split_data
-    return RandomForestClassifier(n_estimators=10, max_depth=3, random_state=0).fit(
-        x_train, y_train
-    )
+    pipeline = Pipeline(
+        [
+            ("encode", cls.encoder_helper(const.CAT_COLUMNS)),
+            ("model", RandomForestClassifier(n_estimators=10, max_depth=3, random_state=0)),
+        ]
+    ).set_output(transform="pandas")
+    return pipeline.fit(x_train, y_train)
 
 
 @pytest.fixture(name="output_dirs", autouse=True)

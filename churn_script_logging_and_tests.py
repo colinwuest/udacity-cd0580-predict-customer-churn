@@ -29,6 +29,10 @@ LOG_FILE = const.LOG_FILE
 DATA_PATH = const.DATA_PATH
 
 LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+# tolerance for comparing an encoded value with the training churn rate
+FLOAT_TOLERANCE = 1e-9
+# a stratified split keeps train and test churn rates within this gap
+MAX_CHURN_RATE_GAP = 0.01
 
 
 def configure_logging(log_file=LOG_FILE, mode="a"):
@@ -89,19 +93,6 @@ def _assert_files_exist(paths):
         assert os.path.getsize(path) > 0, f"empty file {path}"
 
 
-def _prepared_data():
-    """Import the data and encode the categorical columns.
-
-    Args:
-        None
-
-    Returns:
-        df: pandas DataFrame ready for feature engineering
-    """
-    df = cls.import_data(DATA_PATH)
-    return cls.encoder_helper(df, const.CAT_COLUMNS, const.RESPONSE)
-
-
 def test_import(import_data):
     """Test data import: the file loads and the dataframe has rows, columns and the response.
 
@@ -159,7 +150,12 @@ def test_eda(perform_eda):
 
 
 def test_encoder_helper(encoder_helper):
-    """Test encoding: one mean-response column per category, values are churn rates.
+    """Test encoding: fitted on the training split, it encodes unseen data without leakage.
+
+    The encoder is fitted on the training rows only and applied to the test rows:
+    every categorical column must become a churn rate between 0 and 1, the numeric
+    columns must pass through, and an unseen category must fall back to the overall
+    training churn rate.
 
     Args:
         encoder_helper: function under test
@@ -170,17 +166,29 @@ def test_encoder_helper(encoder_helper):
     logger.info("Running test_encoder_helper")
     try:
         df = cls.import_data(DATA_PATH)
-        encoded = encoder_helper(df, const.CAT_COLUMNS, const.RESPONSE)
+        x_train, x_test, y_train, _ = cls.perform_feature_engineering(df, const.RESPONSE)
+        encoder = encoder_helper(const.CAT_COLUMNS).fit(x_train, y_train)
+        encoded = encoder.transform(x_test)
 
-        assert encoded.shape[0] == df.shape[0]
+        assert encoded.shape[0] == x_test.shape[0]
+        assert list(encoded.columns) == const.CAT_COLUMNS + const.QUANT_COLUMNS
         for column in const.CAT_COLUMNS:
-            new_column = f"{column}_{const.RESPONSE}"
-            assert new_column in encoded.columns, f"missing column {new_column}"
-            assert encoded[new_column].notna().all(), f"NaN values in {new_column}"
-            assert encoded[new_column].between(0, 1).all(), f"{new_column} out of [0, 1]"
+            assert encoded[column].notna().all(), f"NaN values in {column}"
+            assert encoded[column].between(0, 1).all(), f"{column} out of [0, 1]"
+
+        unseen = x_test.head(1).copy()
+        unseen["Card_Category"] = "Never seen before"
+        fallback = encoder.transform(unseen)["Card_Category"].iloc[0]
+        assert abs(fallback - y_train.mean()) < FLOAT_TOLERANCE, (
+            "unseen category not mapped to churn rate"
+        )
         logger.info(
-            "SUCCESS test_encoder_helper: encoded %d categorical columns",
+            "SUCCESS test_encoder_helper: fitted on %d training rows, encoded %d "
+            "categorical columns of %d test rows; unseen categories -> %.3f",
+            len(x_train),
             len(const.CAT_COLUMNS),
+            len(x_test),
+            fallback,
         )
     except AssertionError as err:
         logger.error("ERROR test_encoder_helper: %s", err)
@@ -193,7 +201,7 @@ def test_encoder_helper(encoder_helper):
 
 
 def test_perform_feature_engineering(perform_feature_engineering):
-    """Test feature engineering: non-empty, consistent train/test splits with all features.
+    """Test feature engineering: raw, non-overlapping, stratified train/test splits.
 
     Args:
         perform_feature_engineering: function under test
@@ -203,18 +211,26 @@ def test_perform_feature_engineering(perform_feature_engineering):
     """
     logger.info("Running test_perform_feature_engineering")
     try:
-        df = _prepared_data()
+        df = cls.import_data(DATA_PATH)
         x_train, x_test, y_train, y_test = perform_feature_engineering(df, const.RESPONSE)
 
         assert len(x_train) > 0 and len(x_test) > 0
         assert len(x_train) == len(y_train)
         assert len(x_test) == len(y_test)
         assert len(x_train) + len(x_test) == len(df)
-        assert list(x_train.columns) == cls.get_feature_columns(const.RESPONSE)
+        assert list(x_train.columns) == cls.get_feature_columns()
+        assert const.RESPONSE not in x_train.columns, "response leaked into the features"
+        assert set(x_train.index).isdisjoint(x_test.index), "rows in both train and test"
+        assert abs(y_train.mean() - y_test.mean()) < MAX_CHURN_RATE_GAP, "split is not stratified"
+        assert x_train[const.CAT_COLUMNS].map(lambda val: isinstance(val, str)).all().all(), (
+            "categorical columns were encoded before the split"
+        )
         logger.info(
-            "SUCCESS test_perform_feature_engineering: train %s, test %s",
+            "SUCCESS test_perform_feature_engineering: train %s, test %s, churn rate %.3f / %.3f",
             x_train.shape,
             x_test.shape,
+            y_train.mean(),
+            y_test.mean(),
         )
     except AssertionError as err:
         logger.error("ERROR test_perform_feature_engineering: invalid split - %s", err)
@@ -227,7 +243,7 @@ def test_perform_feature_engineering(perform_feature_engineering):
 
 
 def test_train_models(train_models):
-    """Test training: both models and all result images are saved and models load again.
+    """Test training: models and result images are saved, and models predict from raw rows.
 
     Args:
         train_models: function under test
@@ -237,7 +253,7 @@ def test_train_models(train_models):
     """
     logger.info("Running test_train_models (this can take a few minutes)")
     try:
-        df = _prepared_data()
+        df = cls.import_data(DATA_PATH)
         x_train, x_test, y_train, y_test = cls.perform_feature_engineering(df, const.RESPONSE)
         artifacts = list(const.MODEL_FILES.values()) + list(const.RESULT_IMAGES.values())
         _remove_files(artifacts)
@@ -245,11 +261,15 @@ def test_train_models(train_models):
         train_models(x_train, x_test, y_train, y_test)
 
         _assert_files_exist(artifacts)
+        raw_rows = df.loc[x_test.index]  # full raw csv rows: ids, target, string categories
         for model_path in const.MODEL_FILES.values():
             model = joblib.load(model_path)
-            assert len(model.predict(x_test)) == len(x_test), f"{model_path} cannot predict"
+            probabilities = model.predict_proba(raw_rows)[:, 1]
+            assert len(probabilities) == len(raw_rows), f"{model_path} cannot predict"
+            assert ((probabilities >= 0) & (probabilities <= 1)).all()
         logger.info(
-            "SUCCESS test_train_models: %d models and %d result images saved",
+            "SUCCESS test_train_models: %d model pipelines and %d result images saved; "
+            "models predict from raw customer rows",
             len(const.MODEL_FILES),
             len(const.RESULT_IMAGES),
         )

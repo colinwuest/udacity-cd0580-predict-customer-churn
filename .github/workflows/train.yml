@@ -56,7 +56,7 @@ jobs:
             echo "## Training results"
             echo ""
             echo '```'
-            grep -E "Best random forest params|Saved models" logs/training.log
+            grep -E "Split data|Best random forest params|Test ROC AUC|Saved model" logs/training.log
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 

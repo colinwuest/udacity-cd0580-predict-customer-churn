@@ -52,6 +52,11 @@ QUANT_COLUMNS = [
 # --------------------------------------------------------------------------- modelling
 TEST_SIZE = 0.3
 RANDOM_STATE = 42
+# mean-response (target) encoding of CAT_COLUMNS, fitted on training data only:
+# "auto" shrinks rare categories towards the overall churn rate; the folds are used
+# for out-of-fold (cross-fitted) encodings of the training rows
+TARGET_ENCODER_SMOOTH = "auto"
+TARGET_ENCODER_CV_FOLDS = 5
 LOGISTIC_MAX_ITER = 3000
 RF_SEARCH_ITERATIONS = 12
 RF_SEARCH_CV_FOLDS = 3

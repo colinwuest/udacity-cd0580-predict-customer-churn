@@ -24,17 +24,22 @@ The machine learning pipeline:
    (1 = `Attrited Customer`, 0 = `Existing Customer`).
 2. **Exploratory data analysis (EDA)**: saves univariate quantitative, univariate
    categorical and bivariate (correlation heatmap) plots.
-3. **Feature engineering**: mean-response (target) encoding of the five categorical
-   columns in one loop, then a 70/30 train/test split.
-4. **Model training**:
-   - **Random Forest**, tuned with `RandomizedSearchCV` (12 candidates, 3-fold CV)
-   - **Logistic Regression** in a `StandardScaler` pipeline (baseline)
-5. **Prediction and evaluation**: classification reports, ROC curves, Random Forest
-   feature importances and a SHAP summary plot, all saved as images.
-6. **Persistence**: both models are saved as `.pkl` files with `joblib`.
+3. **Feature engineering**: select the 19 raw features and make a stratified 70/30
+   train/test split *before* any encoding, so no test information can leak.
+4. **Model training**: each model is a scikit-learn `Pipeline` whose first step is the
+   mean-response (target) encoder for the five categorical columns (`encoder_helper`),
+   so the encoding is learned from the training rows only:
+   - **Random Forest**: `encode → RandomForestClassifier`, tuned with `RandomizedSearchCV`
+     (12 candidates, 3-fold CV, ROC AUC). The encoder is refit inside every CV fold.
+   - **Logistic Regression**: `encode → StandardScaler → LogisticRegression` (baseline)
+5. **Prediction and evaluation** on the untouched test split: classification reports,
+   ROC curves, Random Forest feature importances and a SHAP summary plot, all saved
+   as images.
+6. **Persistence**: both fitted pipelines, *including the learned encoding*, are saved
+   as `.pkl` files with `joblib`. They predict directly from raw customer rows.
 
-On the test set the Random Forest reaches about 0.99 ROC AUC and the Logistic
-Regression about 0.92.
+On the held-out test set the Random Forest reaches 0.983 ROC AUC (churn recall 0.77)
+and the Logistic Regression 0.912.
 
 ---
 
@@ -102,11 +107,13 @@ What happens:
 
 1. `data/bank_data.csv` is loaded and the `Churn` target is created.
 2. EDA plots are saved to `images/eda/`.
-3. Categorical columns are mean-encoded, then the data is split 70/30.
-4. A Random Forest (randomized hyper-parameter search) and a Logistic Regression are trained.
-5. Classification reports, ROC curves, feature importances and the SHAP summary are
-   saved to `images/results/`.
-6. Both models are saved to `models/`.
+3. The raw features are split 70/30 (stratified on `Churn`); nothing is encoded yet.
+4. A Random Forest pipeline (randomized hyper-parameter search) and a Logistic
+   Regression pipeline are trained on the training split. Each pipeline learns its
+   categorical encoding from the training rows only.
+5. Test ROC AUC is logged, and classification reports, ROC curves, feature
+   importances and the SHAP summary are saved to `images/results/`.
+6. Both fitted pipelines (encoder included) are saved to `models/`.
 
 Progress is printed to the console. The run takes about 30–60 seconds on a laptop.
 
@@ -138,7 +145,7 @@ uv run pytest
 
 ### 3. Unit Tests
 
-`tests/test_churn_library.py` contains 36 fast unit tests (about 20 s in total)
+`tests/test_churn_library.py` contains 43 fast unit tests (about 30 s in total)
 that test every function in `churn_library.py` on its own:
 
 - **Synthetic data**: a 240-row dataset with the same schema as `bank_data.csv`,
@@ -146,11 +153,15 @@ that test every function in `churn_library.py` on its own:
 - **Isolated outputs**: every image and model path is redirected to a pytest
   temporary folder, so the real `images/` and `models/` folders are never modified.
 - **Fast training**: the random forest search is shrunk to one small candidate.
-- **What is covered**: correct values (e.g. hand-computed churn rates for
-  `encoder_helper`, the `Churn` mapping), edge cases (missing file, missing or unknown
-  columns, empty category list, mismatched prediction lengths, models without
+- **What is covered**: correct values (e.g. hand-computed churn rates learned by
+  `encoder_helper`, the `Churn` mapping), edge cases (missing file, unknown columns,
+  unseen categories, mismatched prediction lengths, models without
   `feature_importances_`), side effects (input not mutated, figures closed, parent
-  folders created) and saved models that load and predict.
+  folders created) and saved pipelines that predict from raw csv rows.
+- **No leakage** (`TestNoLeakage`): the saved model's category churn rates must equal
+  those learned from the training split alone (and differ from rates computed on all
+  rows), and retraining with *flipped* test labels must give identical predictions.
+  This proves the test set only evaluates the models and never trains them.
 
 ```bash
 uv run pytest tests                     # unit tests only (fast)
@@ -237,7 +248,8 @@ build artifact.
 ├── constants.py                      # paths, column lists, hyper-parameters, artifact names
 ├── tests/                            # fast pytest unit tests on synthetic data
 │   ├── conftest.py                   #   synthetic dataset + temporary output folders
-│   └── test_churn_library.py         #   unit tests per library function
+│   ├── test_churn_library.py         #   unit tests per library function + leakage checks
+│   └── test_docstrings.py            #   rubric check: file and function docstrings
 ├── churn_notebook.ipynb              # original exploratory notebook (reference solution)
 ├── guide.ipynb                       # project instructions
 ├── pyproject.toml / uv.lock          # project metadata + locked dependencies (uv)
@@ -253,10 +265,11 @@ build artifact.
 
 - `churn_library.py`
   The ML pipeline as reusable functions: `import_data`, `perform_eda`,
-  `encoder_helper`, `perform_feature_engineering`, `classification_report_image`,
-  `feature_importance_plot`, `train_models` and a few plotting helpers
-  (`roc_curve_plot`, `shap_summary_plot`). Running it as a script runs the whole
-  pipeline end to end.
+  `encoder_helper` (the mean-response encoder step), `perform_feature_engineering`
+  (raw stratified split), `build_models` (the two pipelines),
+  `classification_report_image`, `feature_importance_plot`, `train_models` and a few
+  plotting helpers (`roc_curve_plot`, `shap_summary_plot`). Running it as a script runs
+  the whole pipeline end to end.
 
 - `churn_script_logging_and_tests.py`
   One test per library function. Each test checks that returned objects are not
@@ -265,9 +278,10 @@ build artifact.
   `logs/churn_library.log`.
 
 - `constants.py`
-  All configuration in one place. To add a new categorical feature, append its
-  name to `CAT_COLUMNS`. Encoding, feature selection and the tests pick it up
-  automatically.
+  All configuration in one place, including the encoder settings
+  (`TARGET_ENCODER_SMOOTH`, `TARGET_ENCODER_CV_FOLDS`). To add a new categorical
+  feature, append its name to `CAT_COLUMNS`. Encoding, feature selection and the tests
+  pick it up automatically.
 
 - `churn_notebook.ipynb`
   The original notebook that this project refactors. It is kept as a reference and
@@ -305,12 +319,23 @@ creates every folder it needs.
 ---
 ## Expected Outputs
 
-- Models
-  - `models/rfc_model.pkl`: best Random Forest from the randomized search
-  - `models/logistic_model.pkl`: scaler + Logistic Regression pipeline
+- Models (complete scikit-learn pipelines, encoder included)
+  - `models/rfc_model.pkl`: `encode → Random Forest`, best candidate of the search
+  - `models/logistic_model.pkl`: `encode → StandardScaler → Logistic Regression`
 
-  Load them with `joblib.load(path)` and call `.predict(X)`. `X` must contain the
-  columns returned by `churn_library.get_feature_columns()`.
+  They take **raw customer rows**: string categories as they appear in the csv. Extra
+  columns such as `CLIENTNUM` are ignored, and categories never seen in training are
+  encoded as the overall training churn rate. No training data or `encoder_helper`
+  call is needed at prediction time:
+
+  ```python
+  import joblib
+  import pandas as pd
+
+  model = joblib.load("models/rfc_model.pkl")
+  customers = pd.read_csv("new_customers.csv")      # same columns as bank_data.csv
+  churn_probability = model.predict_proba(customers)[:, 1]
+  ```
 
 - EDA images (`images/eda/`)
   - `churn_distribution.png`: histogram of the target (univariate, quantitative)
@@ -336,13 +361,21 @@ creates every folder it needs.
   captures both the test messages (`churn_tests` logger) and the library messages
   (`churn_library` logger). It also works under pytest. Running the script directly
   overwrites the log; running pytest appends to it.
-- **Target encoding**: categories are encoded with the mean churn rate computed on
-  the full dataset, as in the original notebook. This leaks a little target information
-  into the test set. A production version should fit the encoding on the training
-  split only, e.g. with `sklearn.preprocessing.TargetEncoder`.
-- **Class imbalance**: only ~16 % of customers churn. Recall on the churn class
-  (~0.76 for the Random Forest on the test set) matters more than accuracy.
-  Class weights or threshold tuning could improve it.
+- **No information leakage into the evaluation**: unlike the original notebook, which
+  computed the category churn rates on the full dataset before splitting, the data is
+  split first and the encoding (`sklearn.preprocessing.TargetEncoder`) is a fitted step
+  of each model pipeline. It learns the churn rates from the training rows only, is
+  refit inside each cross-validation fold of the hyper-parameter search, and gives
+  training rows out-of-fold (cross-fitted) encodings, so a row never sees its own label.
+  Rare categories are shrunk towards the overall churn rate (`TARGET_ENCODER_SMOOTH`).
+  The test split is used only for the final evaluation. The test scores are therefore
+  honest estimates; they are slightly lower than the notebook's leaky ~0.99 ROC AUC.
+- **EDA on all rows**: the EDA plots describe the whole dataset. They are only
+  descriptive and do not feed into the models, so they do not leak into the evaluation.
+- **Class imbalance**: only ~16 % of customers churn, and the stratified split keeps
+  this rate in both sets. Recall on the churn class (0.77 for the Random Forest on the
+  test set) matters more than accuracy. Class weights or threshold tuning could
+  improve it.
 - **Headless plotting**: matplotlib uses the `Agg` backend, so the code runs on
   servers or CI machines without a display.
 - `test_train_models` retrains the models (about 30 s) and overwrites the files in `models/`.

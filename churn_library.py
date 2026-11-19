@@ -5,6 +5,12 @@ functions covering the full data-science process: data import, exploratory data
 analysis (EDA), categorical encoding, feature engineering, model training,
 prediction and evaluation. All figures and trained models are written to disk.
 
+Leakage-free design: the data is split into train and test sets *before* any
+encoding. The mean-response encoding of the categorical columns is a step inside
+each model's scikit-learn ``Pipeline``, so it is learned from the training rows
+only (and re-learned inside every cross-validation fold). The saved ``.pkl``
+models therefore contain the encoding and predict directly from raw customer data.
+
 Run the whole pipeline with::
 
     uv run python churn_library.py
@@ -23,12 +29,13 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 import shap
+from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import RocCurveDisplay, classification_report
-from sklearn.model_selection import RandomizedSearchCV, train_test_split
+from sklearn.metrics import RocCurveDisplay, classification_report, roc_auc_score
+from sklearn.model_selection import RandomizedSearchCV, StratifiedKFold, train_test_split
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, TargetEncoder
 
 import constants as const
 
@@ -133,68 +140,159 @@ def perform_eda(df):
     _save_figure(fig, const.EDA_IMAGES["heatmap"])
 
 
-def encoder_helper(df, category_lst, response):
-    """Mean-response (target) encode each categorical column in ``category_lst``.
+def encoder_helper(category_lst, passthrough_lst=None):
+    """Build the (unfitted) mean-response encoder for the categorical columns.
 
-    For every column ``col`` a new column ``f"{col}_{response}"`` is added that
-    holds the churn rate of the category the row belongs to. This replaces the
-    copy-pasted blocks of the notebook with a single loop, so adding a feature
-    only means extending the list.
+    Every column in ``category_lst`` is replaced by the churn rate of its category
+    (scikit-learn ``TargetEncoder``); the numeric columns in ``passthrough_lst`` are
+    kept unchanged and any other column (ids, the target, ...) is dropped. Adding a
+    categorical feature only means extending the list.
+
+    The encoder is meant to be the first step of a model ``Pipeline``. It must be
+    fitted on training data only, so the churn rates never include test labels:
+
+    * ``fit`` learns one churn rate per category from the training rows, with
+      ``TARGET_ENCODER_SMOOTH`` shrinking rare categories towards the overall rate;
+    * during ``fit_transform`` the training rows get out-of-fold (cross-fitted)
+      encodings, so the model cannot memorise a row's own label;
+    * ``transform`` maps new data with the learned rates; unseen categories get
+      the overall training churn rate.
 
     Args:
-        df: pandas DataFrame
         category_lst: list of categorical column names to encode
-        response: name of the response column (also used as the new-column suffix)
+        passthrough_lst: list of numeric column names to keep as they are;
+            defaults to ``constants.QUANT_COLUMNS``
 
     Returns:
-        df: copy of the DataFrame with the encoded columns added
+        encoder: unfitted ``ColumnTransformer`` that outputs a pandas DataFrame with
+            the encoded ``category_lst`` columns followed by ``passthrough_lst``
     """
-    df = df.copy()
-    for column in category_lst:
-        df[f"{column}_{response}"] = df[column].map(df.groupby(column)[response].mean())
-    logger.info("Encoded categorical columns: %s", ", ".join(category_lst))
-    return df
+    if passthrough_lst is None:
+        passthrough_lst = const.QUANT_COLUMNS
+    target_encoder = TargetEncoder(
+        target_type="binary",
+        smooth=const.TARGET_ENCODER_SMOOTH,
+        cv=StratifiedKFold(
+            n_splits=const.TARGET_ENCODER_CV_FOLDS,
+            shuffle=True,
+            random_state=const.RANDOM_STATE,
+        ),
+    )
+    encoder = ColumnTransformer(
+        [
+            ("mean_response", target_encoder, list(category_lst)),
+            ("numeric", "passthrough", list(passthrough_lst)),
+        ],
+        remainder="drop",
+        verbose_feature_names_out=False,
+    )
+    return encoder.set_output(transform="pandas")
 
 
-def get_feature_columns(response=const.RESPONSE):
-    """Return the ordered list of model input columns.
+def get_feature_columns():
+    """Return the raw input columns the models are trained on and predict from.
 
     Args:
-        response: response column name used as suffix for encoded categorical columns
+        None
 
     Returns:
-        list of column names (quantitative + encoded categorical)
+        feature_columns: list of column names (``QUANT_COLUMNS`` + ``CAT_COLUMNS``)
     """
-    return const.QUANT_COLUMNS + [f"{col}_{response}" for col in const.CAT_COLUMNS]
+    return const.QUANT_COLUMNS + const.CAT_COLUMNS
 
 
 def perform_feature_engineering(df, response):
-    """Select the model features and split the data into train and test sets.
+    """Select the raw model features and split them into train and test sets.
 
-    Categorical columns are encoded here if ``encoder_helper`` has not been run yet.
+    No encoding happens here: the categorical columns stay raw so that the
+    encoding can be learned from the training split only (see ``encoder_helper``).
+    The split is stratified on the response, so train and test sets have the
+    same churn rate.
 
     Args:
-        df: pandas DataFrame
+        df: pandas DataFrame with the raw feature columns and the response column
         response: response column name
 
     Returns:
-        x_train: X training data
-        x_test: X testing data
-        y_train: y training data
-        y_test: y testing data
+        x_train: DataFrame of raw training features
+        x_test: DataFrame of raw test features
+        y_train: Series of training responses
+        y_test: Series of test responses
     """
-    feature_cols = get_feature_columns(response)
-    missing = [col for col in feature_cols if col not in df.columns]
-    if missing:
-        df = encoder_helper(df, const.CAT_COLUMNS, response)
-
-    x_data = df[feature_cols]
+    x_data = df[get_feature_columns()]
     y_data = df[response]
     x_train, x_test, y_train, y_test = train_test_split(
-        x_data, y_data, test_size=const.TEST_SIZE, random_state=const.RANDOM_STATE
+        x_data,
+        y_data,
+        test_size=const.TEST_SIZE,
+        random_state=const.RANDOM_STATE,
+        stratify=y_data,
     )
-    logger.info("Split data: %d train rows, %d test rows", len(x_train), len(x_test))
+    logger.info(
+        "Split data: %d train rows (churn rate %.3f), %d test rows (churn rate %.3f)",
+        len(x_train),
+        y_train.mean(),
+        len(x_test),
+        y_test.mean(),
+    )
     return x_train, x_test, y_train, y_test
+
+
+def build_models():
+    """Build the two unfitted model pipelines, each starting with the encoder.
+
+    Both pipelines encode the categorical columns themselves, so fitting them on
+    training data keeps the test set out of the encoding, and the random forest
+    search refits the encoder inside every cross-validation fold.
+
+    Args:
+        None
+
+    Returns:
+        cv_rfc: ``RandomizedSearchCV`` over an ``encode -> random forest`` pipeline
+        lrc: ``encode -> StandardScaler -> LogisticRegression`` pipeline
+    """
+    rf_pipeline = Pipeline(
+        [
+            ("encode", encoder_helper(const.CAT_COLUMNS)),
+            ("model", RandomForestClassifier(random_state=const.RANDOM_STATE)),
+        ]
+    ).set_output(transform="pandas")
+    cv_rfc = RandomizedSearchCV(
+        estimator=rf_pipeline,
+        param_distributions={f"model__{key}": val for key, val in const.RF_PARAM_GRID.items()},
+        n_iter=const.RF_SEARCH_ITERATIONS,
+        cv=const.RF_SEARCH_CV_FOLDS,
+        scoring="roc_auc",
+        random_state=const.RANDOM_STATE,
+        n_jobs=-1,
+        error_score="raise",
+    )
+    lrc = Pipeline(
+        [
+            ("encode", encoder_helper(const.CAT_COLUMNS)),
+            ("scaler", StandardScaler()),
+            ("model", LogisticRegression(max_iter=const.LOGISTIC_MAX_ITER)),
+        ]
+    ).set_output(transform="pandas")
+    return cv_rfc, lrc
+
+
+def _unwrap_pipeline(model, x_data):
+    """Split a fitted pipeline into its final estimator and its transformed input.
+
+    Args:
+        model: fitted ``Pipeline`` or a plain fitted estimator
+        x_data: pandas DataFrame of raw input rows for ``model``
+
+    Returns:
+        estimator: the final estimator of the pipeline (or ``model`` itself)
+        x_model: DataFrame as seen by ``estimator`` (encoded features for a pipeline,
+            ``x_data`` unchanged otherwise)
+    """
+    if isinstance(model, Pipeline):
+        return model[-1], model[:-1].transform(x_data)
+    return model, x_data
 
 
 def _report_image(model_name, train_report, test_report, output_pth):
@@ -265,13 +363,16 @@ def feature_importance_plot(model, x_data, output_pth):
     """Create and store the feature importances of a tree-based model.
 
     Args:
-        model: fitted model exposing ``feature_importances_``
-        x_data: pandas DataFrame of X values (used for the feature names)
+        model: fitted model exposing ``feature_importances_``, or a fitted pipeline
+            whose final step does
+        x_data: pandas DataFrame of input rows for ``model`` (raw rows for a
+            pipeline); used for the feature names
         output_pth: path to store the figure
 
     Returns:
         None
     """
+    model, x_data = _unwrap_pipeline(model, x_data)
     importances = model.feature_importances_
     indices = np.argsort(importances)[::-1]
     names = [x_data.columns[i] for i in indices]
@@ -288,13 +389,14 @@ def shap_summary_plot(model, x_data, output_pth):
     """Create and store a SHAP bar summary plot for a tree-based model.
 
     Args:
-        model: fitted tree-based model
-        x_data: pandas DataFrame of X values to explain
+        model: fitted tree-based model, or a fitted pipeline ending in one
+        x_data: pandas DataFrame of input rows to explain (raw rows for a pipeline)
         output_pth: path to store the figure
 
     Returns:
         None
     """
+    model, x_data = _unwrap_pipeline(model, x_data)
     shap_values = shap.TreeExplainer(model).shap_values(x_data)
     if isinstance(shap_values, np.ndarray) and shap_values.ndim == PER_CLASS_SHAP_NDIM:
         shap_values = [shap_values[:, :, idx] for idx in range(shap_values.shape[2])]
@@ -334,44 +436,40 @@ def roc_curve_plot(models, x_test, y_test, output_pth):
 def train_models(x_train, x_test, y_train, y_test):
     """Train, evaluate and store the models together with their result images.
 
-    A random forest is tuned with a randomized hyper-parameter search, and a
-    standardised logistic regression is fitted as baseline. Both models are
-    saved with joblib; classification reports, ROC curves, feature importances
-    and a SHAP summary are saved as images.
+    Both models are pipelines that start with the mean-response encoder (see
+    ``build_models``). They are fitted on the training split only; the test split
+    is used purely for evaluation. The random forest pipeline is tuned with a
+    randomized, cross-validated search on the training data. Both fitted pipelines
+    (encoder included) are saved with joblib, so they predict from raw customer
+    rows. Classification reports, ROC curves, feature importances and a SHAP
+    summary are saved as images.
 
     Args:
-        x_train: X training data
-        x_test: X testing data
-        y_train: y training data
-        y_test: y testing data
+        x_train: DataFrame of raw training features
+        x_test: DataFrame of raw test features
+        y_train: Series of training responses
+        y_test: Series of test responses
 
     Returns:
         None
     """
     create_output_directories()
+    cv_rfc, lrc = build_models()
 
-    cv_rfc = RandomizedSearchCV(
-        estimator=RandomForestClassifier(random_state=const.RANDOM_STATE),
-        param_distributions=const.RF_PARAM_GRID,
-        n_iter=const.RF_SEARCH_ITERATIONS,
-        cv=const.RF_SEARCH_CV_FOLDS,
-        random_state=const.RANDOM_STATE,
-        n_jobs=-1,
-        error_score="raise",
-    )
-    lrc = Pipeline(
-        [
-            ("scaler", StandardScaler()),
-            ("model", LogisticRegression(max_iter=const.LOGISTIC_MAX_ITER)),
-        ]
-    )
-
-    logger.info("Training random forest (randomized search)...")
+    logger.info("Training random forest pipeline (randomized search)...")
     cv_rfc.fit(x_train, y_train)
-    logger.info("Best random forest params: %s", cv_rfc.best_params_)
-    logger.info("Training logistic regression...")
+    logger.info(
+        "Best random forest params: %s (CV ROC AUC on training data %.3f)",
+        cv_rfc.best_params_,
+        cv_rfc.best_score_,
+    )
+    logger.info("Training logistic regression pipeline...")
     lrc.fit(x_train, y_train)
     rfc = cv_rfc.best_estimator_
+
+    for name, model in (("random forest", rfc), ("logistic regression", lrc)):
+        auc = roc_auc_score(y_test, model.predict_proba(x_test)[:, 1])
+        logger.info("Test ROC AUC %s: %.3f", name, auc)
 
     classification_report_image(
         y_train,
@@ -392,7 +490,7 @@ def train_models(x_train, x_test, y_train, y_test):
 
     joblib.dump(rfc, const.MODEL_FILES["rfc"])
     joblib.dump(lrc, const.MODEL_FILES["logistic"])
-    logger.info("Saved models to %s", const.MODELS_DIR)
+    logger.info("Saved model pipelines (encoder included) to %s", const.MODELS_DIR)
 
 
 def main():
@@ -408,7 +506,6 @@ def main():
     create_output_directories()
     df = import_data(const.DATA_PATH)
     perform_eda(df)
-    df = encoder_helper(df, const.CAT_COLUMNS, const.RESPONSE)
     x_train, x_test, y_train, y_test = perform_feature_engineering(df, const.RESPONSE)
     train_models(x_train, x_test, y_train, y_test)
 
