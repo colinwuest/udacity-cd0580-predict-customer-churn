@@ -34,10 +34,16 @@ CATEGORY_VALUES = {
 def fixture_raw_df():
     """Return a synthetic raw dataframe with the schema of ``bank_data.csv``.
 
-    Churn is made to depend on ``Total_Trans_Ct`` so models have signal to learn.
+    Churn is made to depend on ``Total_Trans_Ct`` (the lowest 30 % churn) so the
+    models have a signal to learn. A fixed random seed makes the data reproducible.
+
+    Args:
+        None
 
     Returns:
-        pandas DataFrame without the ``Churn`` column
+        raw_df: pandas DataFrame with ``N_ROWS`` rows, the ``CLIENTNUM`` id, the
+            ``Attrition_Flag`` target, all ``CAT_COLUMNS`` and ``QUANT_COLUMNS``,
+            and no ``Churn`` column
     """
     rng = np.random.default_rng(0)
     data = {"CLIENTNUM": np.arange(700_000_000, 700_000_000 + N_ROWS)}
@@ -52,8 +58,12 @@ def fixture_raw_df():
 def fixture_csv_path(raw_df, tmp_path):
     """Write the synthetic data to a csv laid out like ``bank_data.csv`` (index column first).
 
+    Args:
+        raw_df: synthetic raw DataFrame from the ``raw_df`` fixture
+        tmp_path: pytest's per-test temporary directory (``pathlib.Path``)
+
     Returns:
-        path to the csv file
+        csv_path: str path of the written ``bank_data.csv`` inside ``tmp_path``
     """
     path = tmp_path / "bank_data.csv"
     raw_df.to_csv(path)
@@ -64,18 +74,28 @@ def fixture_csv_path(raw_df, tmp_path):
 def fixture_churn_df(csv_path):
     """Return the synthetic data as loaded by ``import_data`` (includes ``Churn``).
 
+    Args:
+        csv_path: str path of the synthetic csv from the ``csv_path`` fixture
+
     Returns:
-        pandas DataFrame
+        churn_df: pandas DataFrame with the raw columns plus the binary ``Churn`` column
     """
     return cls.import_data(csv_path)
 
 
 @pytest.fixture(name="split_data")
 def fixture_split_data(churn_df):
-    """Return ``(x_train, x_test, y_train, y_test)`` for the synthetic data.
+    """Return the train/test split of the encoded synthetic data.
+
+    The categorical columns are mean-encoded with ``encoder_helper`` and the data is
+    split with ``perform_feature_engineering`` exactly as in the real pipeline.
+
+    Args:
+        churn_df: synthetic DataFrame with ``Churn`` from the ``churn_df`` fixture
 
     Returns:
-        tuple of train/test features and labels
+        split_data: tuple ``(x_train, x_test, y_train, y_test)`` where the ``x_*``
+            items are feature DataFrames and the ``y_*`` items are ``Churn`` Series
     """
     encoded = cls.encoder_helper(churn_df, const.CAT_COLUMNS, const.RESPONSE)
     return cls.perform_feature_engineering(encoded, const.RESPONSE)
@@ -85,8 +105,12 @@ def fixture_split_data(churn_df):
 def fixture_fitted_rf(split_data):
     """Return a small random forest fitted on the synthetic training data.
 
+    Args:
+        split_data: tuple ``(x_train, x_test, y_train, y_test)`` from the
+            ``split_data`` fixture; only the training part is used
+
     Returns:
-        fitted RandomForestClassifier
+        fitted_rf: fitted ``RandomForestClassifier`` (10 trees, max depth 3)
     """
     x_train, _, y_train, _ = split_data
     return RandomForestClassifier(n_estimators=10, max_depth=3, random_state=0).fit(
@@ -99,10 +123,17 @@ def fixture_output_dirs(tmp_path, monkeypatch):
     """Redirect all output folders and artifact paths to a temporary directory.
 
     Applied automatically to every unit test so the real ``images/`` and
-    ``models/`` folders are never modified.
+    ``models/`` folders are never modified. ``EDA_DIR``, ``RESULTS_DIR``,
+    ``MODELS_DIR``, ``EDA_IMAGES``, ``RESULT_IMAGES`` and ``MODEL_FILES`` in
+    ``constants`` are patched for the duration of the test only.
+
+    Args:
+        tmp_path: pytest's per-test temporary directory (``pathlib.Path``)
+        monkeypatch: pytest fixture used to patch ``constants`` and undo it afterwards
 
     Returns:
-        dict with the temporary ``eda``, ``results`` and ``models`` directories
+        output_dirs: dict mapping ``"eda"``, ``"results"`` and ``"models"`` to the
+            temporary ``pathlib.Path`` folders (not created until the code under test runs)
     """
     dirs = {name: tmp_path / "out" / name for name in ("eda", "results", "models")}
     monkeypatch.setattr(const, "EDA_DIR", str(dirs["eda"]))
@@ -123,6 +154,12 @@ def fixture_output_dirs(tmp_path, monkeypatch):
 def fixture_fast_search(monkeypatch):
     """Shrink the random forest hyper-parameter search so training takes seconds.
 
+    Applied automatically to every unit test: ``RF_PARAM_GRID`` is reduced to a
+    single small candidate with one search iteration and 2-fold cross-validation.
+
+    Args:
+        monkeypatch: pytest fixture used to patch ``constants`` and undo it afterwards
+
     Returns:
         None
     """
@@ -139,8 +176,13 @@ def fixture_fast_search(monkeypatch):
 def close_figures():
     """Close any matplotlib figures a test leaves open.
 
-    Yields:
+    Applied automatically to every unit test; the cleanup runs after the test.
+
+    Args:
         None
+
+    Yields:
+        None: control passes to the test; all figures are closed once it finishes
     """
     yield
     plt.close("all")

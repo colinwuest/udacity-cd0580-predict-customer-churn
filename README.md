@@ -161,6 +161,14 @@ uv run pytest                           # unit + end-to-end tests on the real da
 The tests in `churn_script_logging_and_tests.py` are marked `integration`
 automatically by the root `conftest.py`.
 
+`tests/test_docstrings.py` checks the rubric's documentation requirements without
+running any project code. It parses every learner-written file and fails if:
+
+- a file docstring lacks a purpose, `Author:` or `Date created:`;
+- a function (including fixtures and tests) has no purpose line;
+- a function has no `Args:` section naming each input, or `None` when it has no inputs;
+- a function has no `Returns:` / `Yields:` section, or `None` when it returns nothing.
+
 ---
 
 ### 4. Code Quality
@@ -171,8 +179,9 @@ uv run ruff check .                     # lint: pycodestyle, pyflakes, isort, na
 uv run pylint churn_library.py churn_script_logging_and_tests.py tests
 ```
 
-Both files score **10.00/10** with pylint and pass `ruff check`. The configuration
-lives in `pyproject.toml`.
+Both files score **10.00/10** with pylint and pass `ruff check`. pylint loads the
+`docparams` extension, so an undocumented parameter, return value or yield in any
+function fails the lint. The configuration lives in `pyproject.toml`.
 
 ---
 

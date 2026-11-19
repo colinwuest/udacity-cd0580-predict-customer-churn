@@ -51,11 +51,32 @@ known-first-party = ["churn_library", "constants"]
 [tool.ruff.format]
 quote-style = "double"
 
+[tool.pylint.main]
+# enforce documented parameters, returns and yields (Google style)
+load-plugins = ["pylint.extensions.docparams"]
+
+[tool.pylint.parameter_documentation]
+default-docstring-type = "google"
+accept-no-param-doc = false
+accept-no-return-doc = false
+accept-no-yields-doc = false
+accept-no-raise-doc = true
+
 [tool.pylint.format]
 max-line-length = 100
 
 [tool.pylint."messages control"]
-disable = ["too-many-arguments", "too-many-positional-arguments"]
+disable = [
+    "too-many-arguments",
+    "too-many-positional-arguments",
+    # the rubric asks for an explicit "Returns: None", which docparams calls redundant
+    "redundant-returns-doc",
+    "redundant-yields-doc",
+    # types are described in prose, matching the main scripts
+    "missing-type-doc",
+    "missing-return-type-doc",
+    "missing-yield-type-doc",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

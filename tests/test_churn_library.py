@@ -30,10 +30,10 @@ def _assert_image(path):
     """Assert that ``path`` is a non-empty PNG file.
 
     Args:
-        path: file path
+        path: str or ``pathlib.Path`` of the image file to check
 
     Returns:
-        None
+        None (raises ``AssertionError`` if the file is missing or not a PNG)
     """
     assert os.path.isfile(path), f"missing {path}"
     with open(path, "rb") as file:
@@ -44,13 +44,29 @@ class TestCreateOutputDirectories:
     """Tests for ``create_output_directories``."""
 
     def test_creates_all_directories(self, output_dirs):
-        """All three output folders exist afterwards."""
+        """All three output folders exist afterwards.
+
+        Args:
+            output_dirs: dict of temporary output folders (``eda``, ``results``, ``models``)
+                from the ``output_dirs`` fixture
+
+        Returns:
+            None (the test fails with an ``AssertionError`` if a check does not hold)
+        """
         cls.create_output_directories()
         for folder in output_dirs.values():
             assert folder.is_dir()
 
     def test_is_idempotent(self, output_dirs):
-        """Calling it twice does not raise."""
+        """Calling it twice does not raise.
+
+        Args:
+            output_dirs: dict of temporary output folders (``eda``, ``results``, ``models``)
+                from the ``output_dirs`` fixture
+
+        Returns:
+            None (the test fails with an ``AssertionError`` if a check does not hold)
+        """
         cls.create_output_directories()
         cls.create_output_directories()
         assert output_dirs["models"].is_dir()
@@ -60,29 +76,66 @@ class TestImportData:
     """Tests for ``import_data``."""
 
     def test_returns_all_rows(self, csv_path, raw_df):
-        """Every csv row is loaded."""
+        """Every csv row is loaded.
+
+        Args:
+            csv_path: str path of the synthetic csv from the ``csv_path`` fixture
+            raw_df: synthetic raw DataFrame from the ``raw_df`` fixture
+
+        Returns:
+            None (the test fails with an ``AssertionError`` if a check does not hold)
+        """
         df = cls.import_data(csv_path)
         assert len(df) == len(raw_df)
 
     def test_index_column_is_not_a_feature(self, csv_path):
-        """The csv index column is used as index, not loaded as ``Unnamed: 0``."""
+        """The csv index column is used as index, not loaded as ``Unnamed: 0``.
+
+        Args:
+            csv_path: str path of the synthetic csv from the ``csv_path`` fixture
+
+        Returns:
+            None (the test fails with an ``AssertionError`` if a check does not hold)
+        """
         df = cls.import_data(csv_path)
         assert not any(col.startswith("Unnamed") for col in df.columns)
 
     def test_adds_binary_churn_column(self, csv_path):
-        """``Churn`` is 1 exactly for attrited customers and 0 otherwise."""
+        """``Churn`` is 1 exactly for attrited customers and 0 otherwise.
+
+        Args:
+            csv_path: str path of the synthetic csv from the ``csv_path`` fixture
+
+        Returns:
+            None (the test fails with an ``AssertionError`` if a check does not hold)
+        """
         df = cls.import_data(csv_path)
         expected = (df[const.ATTRITION_COLUMN] != const.EXISTING_CUSTOMER).astype(int)
         pd.testing.assert_series_equal(df[const.RESPONSE], expected, check_names=False)
         assert set(df[const.RESPONSE].unique()) == {0, 1}
 
     def test_missing_file_raises(self, tmp_path):
-        """A missing file raises ``FileNotFoundError``."""
+        """A missing file raises ``FileNotFoundError``.
+
+        Args:
+            tmp_path: pytest's per-test temporary directory (``pathlib.Path``)
+
+        Returns:
+            None (the test fails if ``FileNotFoundError`` is not raised)
+        """
         with pytest.raises(FileNotFoundError):
             cls.import_data(str(tmp_path / "does_not_exist.csv"))
 
     def test_logs_import(self, csv_path, caplog):
-        """A successful import is logged at INFO level."""
+        """A successful import is logged at INFO level.
+
+        Args:
+            csv_path: str path of the synthetic csv from the ``csv_path`` fixture
+            caplog: pytest fixture that captures log records emitted during the test
+
+        Returns:
+            None (the test fails with an ``AssertionError`` if a check does not hold)
+        """
         with caplog.at_level(logging.INFO, logger="churn_library"):
             cls.import_data(csv_path)
         assert "Imported" in caplog.text
@@ -92,25 +145,53 @@ class TestPerformEda:
     """Tests for ``perform_eda``."""
 
     def test_saves_every_eda_image(self, churn_df):
-        """All configured EDA images are written as PNG files."""
+        """All configured EDA images are written as PNG files.
+
+        Args:
+            churn_df: synthetic DataFrame with ``Churn`` from the ``churn_df`` fixture
+
+        Returns:
+            None (the test fails with an ``AssertionError`` if a check does not hold)
+        """
         cls.perform_eda(churn_df)
         for path in const.EDA_IMAGES.values():
             _assert_image(path)
 
     def test_closes_figures(self, churn_df):
-        """No matplotlib figures stay open (avoids memory leaks in long runs)."""
+        """No matplotlib figures stay open (avoids memory leaks in long runs).
+
+        Args:
+            churn_df: synthetic DataFrame with ``Churn`` from the ``churn_df`` fixture
+
+        Returns:
+            None (the test fails with an ``AssertionError`` if a check does not hold)
+        """
         plt.close("all")
         cls.perform_eda(churn_df)
         assert not plt.get_fignums()
 
     def test_does_not_modify_input(self, churn_df):
-        """The dataframe passed in is left unchanged."""
+        """The dataframe passed in is left unchanged.
+
+        Args:
+            churn_df: synthetic DataFrame with ``Churn`` from the ``churn_df`` fixture
+
+        Returns:
+            None (the test fails with an ``AssertionError`` if a check does not hold)
+        """
         before = churn_df.copy()
         cls.perform_eda(churn_df)
         pd.testing.assert_frame_equal(churn_df, before)
 
     def test_missing_column_raises(self, churn_df):
-        """A dataframe without a plotted column raises ``KeyError``."""
+        """A dataframe without a plotted column raises ``KeyError``.
+
+        Args:
+            churn_df: synthetic DataFrame with ``Churn`` from the ``churn_df`` fixture
+
+        Returns:
+            None (the test fails if ``KeyError`` is not raised)
+        """
         with pytest.raises(KeyError):
             cls.perform_eda(churn_df.drop(columns=["Customer_Age"]))
 
@@ -120,7 +201,15 @@ class TestEncoderHelper:
 
     @pytest.fixture(name="small_df")
     def fixture_small_df(self):
-        """Return a hand-made dataframe with known churn rates per category."""
+        """Return a hand-made dataframe with known churn rates per category.
+
+        Args:
+            None
+
+        Returns:
+            small_df: DataFrame with ``Gender``, ``Card_Category`` and ``Churn``;
+                churn rates are M 0.5, F 0.25, Blue 2/3 and Gold 0
+        """
         return pd.DataFrame(
             {
                 "Gender": ["M", "M", "F", "F", "F", "F"],
@@ -130,7 +219,14 @@ class TestEncoderHelper:
         )
 
     def test_computes_mean_response(self, small_df):
-        """Each row gets the churn rate of its category."""
+        """Each row gets the churn rate of its category.
+
+        Args:
+            small_df: hand-made DataFrame with known churn rates from the ``small_df`` fixture
+
+        Returns:
+            None (the test fails with an ``AssertionError`` if a check does not hold)
+        """
         encoded = cls.encoder_helper(small_df, ["Gender", "Card_Category"], "Churn")
         assert encoded["Gender_Churn"].tolist() == pytest.approx([0.5, 0.5, 0.25, 0.25, 0.25, 0.25])
         assert encoded["Card_Category_Churn"].tolist() == pytest.approx(
@@ -138,29 +234,64 @@ class TestEncoderHelper:
         )
 
     def test_uses_response_as_suffix(self, small_df):
-        """New columns are named ``<column>_<response>``."""
+        """New columns are named ``<column>_<response>``.
+
+        Args:
+            small_df: hand-made DataFrame with known churn rates from the ``small_df`` fixture
+
+        Returns:
+            None (the test fails with an ``AssertionError`` if a check does not hold)
+        """
         renamed = small_df.rename(columns={"Churn": "Target"})
         encoded = cls.encoder_helper(renamed, ["Gender"], "Target")
         assert "Gender_Target" in encoded.columns
 
     def test_does_not_modify_input(self, small_df):
-        """The input dataframe is not changed in place."""
+        """The input dataframe is not changed in place.
+
+        Args:
+            small_df: hand-made DataFrame with known churn rates from the ``small_df`` fixture
+
+        Returns:
+            None (the test fails with an ``AssertionError`` if a check does not hold)
+        """
         before = small_df.copy()
         cls.encoder_helper(small_df, ["Gender"], "Churn")
         pd.testing.assert_frame_equal(small_df, before)
 
     def test_keeps_original_columns(self, small_df):
-        """Original columns are preserved and exactly one column per category is added."""
+        """Original columns are preserved and exactly one column per category is added.
+
+        Args:
+            small_df: hand-made DataFrame with known churn rates from the ``small_df`` fixture
+
+        Returns:
+            None (the test fails with an ``AssertionError`` if a check does not hold)
+        """
         encoded = cls.encoder_helper(small_df, ["Gender", "Card_Category"], "Churn")
         assert list(encoded.columns[: small_df.shape[1]]) == list(small_df.columns)
         assert encoded.shape == (small_df.shape[0], small_df.shape[1] + 2)
 
     def test_empty_category_list(self, small_df):
-        """An empty category list returns an equal dataframe."""
+        """An empty category list returns an equal dataframe.
+
+        Args:
+            small_df: hand-made DataFrame with known churn rates from the ``small_df`` fixture
+
+        Returns:
+            None (the test fails with an ``AssertionError`` if a check does not hold)
+        """
         pd.testing.assert_frame_equal(cls.encoder_helper(small_df, [], "Churn"), small_df)
 
     def test_all_project_categories(self, churn_df):
-        """All project categories are encoded into values between 0 and 1 without NaNs."""
+        """All project categories are encoded into values between 0 and 1 without NaNs.
+
+        Args:
+            churn_df: synthetic DataFrame with ``Churn`` from the ``churn_df`` fixture
+
+        Returns:
+            None (the test fails with an ``AssertionError`` if a check does not hold)
+        """
         encoded = cls.encoder_helper(churn_df, const.CAT_COLUMNS, const.RESPONSE)
         for column in const.CAT_COLUMNS:
             values = encoded[f"{column}_{const.RESPONSE}"]
@@ -168,7 +299,14 @@ class TestEncoderHelper:
             assert values.between(0, 1).all()
 
     def test_unknown_column_raises(self, small_df):
-        """Encoding a column that does not exist raises ``KeyError``."""
+        """Encoding a column that does not exist raises ``KeyError``.
+
+        Args:
+            small_df: hand-made DataFrame with known churn rates from the ``small_df`` fixture
+
+        Returns:
+            None (the test fails if ``KeyError`` is not raised)
+        """
         with pytest.raises(KeyError):
             cls.encoder_helper(small_df, ["Not_A_Column"], "Churn")
 
@@ -177,14 +315,28 @@ class TestGetFeatureColumns:
     """Tests for ``get_feature_columns``."""
 
     def test_quantitative_then_encoded(self):
-        """Quantitative columns come first, then one encoded column per category."""
+        """Quantitative columns come first, then one encoded column per category.
+
+        Args:
+            None
+
+        Returns:
+            None (the test fails with an ``AssertionError`` if a check does not hold)
+        """
         columns = cls.get_feature_columns("Churn")
         n_quant = len(const.QUANT_COLUMNS)
         assert columns[:n_quant] == const.QUANT_COLUMNS
         assert columns[n_quant:] == [f"{col}_Churn" for col in const.CAT_COLUMNS]
 
     def test_has_no_duplicates(self):
-        """No feature appears twice."""
+        """No feature appears twice.
+
+        Args:
+            None
+
+        Returns:
+            None (the test fails with an ``AssertionError`` if a check does not hold)
+        """
         columns = cls.get_feature_columns()
         assert len(columns) == len(set(columns))
 
@@ -193,7 +345,16 @@ class TestPerformFeatureEngineering:
     """Tests for ``perform_feature_engineering``."""
 
     def test_split_sizes(self, split_data, churn_df):
-        """Train/test sizes follow ``TEST_SIZE`` and cover every row."""
+        """Train/test sizes follow ``TEST_SIZE`` and cover every row.
+
+        Args:
+            split_data: tuple ``(x_train, x_test, y_train, y_test)`` from the ``split_data``
+                fixture
+            churn_df: synthetic DataFrame with ``Churn`` from the ``churn_df`` fixture
+
+        Returns:
+            None (the test fails with an ``AssertionError`` if a check does not hold)
+        """
         x_train, x_test, y_train, y_test = split_data
         assert len(x_train) + len(x_test) == len(churn_df)
         assert len(x_test) == pytest.approx(len(churn_df) * const.TEST_SIZE, abs=1)
@@ -201,25 +362,55 @@ class TestPerformFeatureEngineering:
         assert len(x_test) == len(y_test)
 
     def test_feature_columns(self, split_data):
-        """X contains exactly the model features and never the response."""
+        """X contains exactly the model features and never the response.
+
+        Args:
+            split_data: tuple ``(x_train, x_test, y_train, y_test)`` from the ``split_data``
+                fixture
+
+        Returns:
+            None (the test fails with an ``AssertionError`` if a check does not hold)
+        """
         x_train, x_test, _, _ = split_data
         assert list(x_train.columns) == cls.get_feature_columns(const.RESPONSE)
         assert list(x_test.columns) == list(x_train.columns)
         assert const.RESPONSE not in x_train.columns
 
     def test_no_overlap_between_train_and_test(self, split_data):
-        """No row ends up in both train and test sets."""
+        """No row ends up in both train and test sets.
+
+        Args:
+            split_data: tuple ``(x_train, x_test, y_train, y_test)`` from the ``split_data``
+                fixture
+
+        Returns:
+            None (the test fails with an ``AssertionError`` if a check does not hold)
+        """
         x_train, x_test, _, _ = split_data
         assert set(x_train.index).isdisjoint(x_test.index)
 
     def test_is_reproducible(self, churn_df):
-        """The split is deterministic thanks to the fixed random state."""
+        """The split is deterministic thanks to the fixed random state.
+
+        Args:
+            churn_df: synthetic DataFrame with ``Churn`` from the ``churn_df`` fixture
+
+        Returns:
+            None (the test fails with an ``AssertionError`` if a check does not hold)
+        """
         first = cls.perform_feature_engineering(churn_df, const.RESPONSE)
         second = cls.perform_feature_engineering(churn_df, const.RESPONSE)
         assert first[0].index.equals(second[0].index)
 
     def test_encodes_when_needed(self, churn_df):
-        """Unencoded input is encoded automatically and gives the same split."""
+        """Unencoded input is encoded automatically and gives the same split.
+
+        Args:
+            churn_df: synthetic DataFrame with ``Churn`` from the ``churn_df`` fixture
+
+        Returns:
+            None (the test fails with an ``AssertionError`` if a check does not hold)
+        """
         encoded = cls.encoder_helper(churn_df, const.CAT_COLUMNS, const.RESPONSE)
         from_raw = cls.perform_feature_engineering(churn_df, const.RESPONSE)
         from_encoded = cls.perform_feature_engineering(encoded, const.RESPONSE)
@@ -230,14 +421,30 @@ class TestClassificationReportImage:
     """Tests for ``classification_report_image``."""
 
     def test_saves_both_reports(self, split_data):
-        """One report image per model is written."""
+        """One report image per model is written.
+
+        Args:
+            split_data: tuple ``(x_train, x_test, y_train, y_test)`` from the ``split_data``
+                fixture
+
+        Returns:
+            None (the test fails with an ``AssertionError`` if a check does not hold)
+        """
         _, _, y_train, y_test = split_data
         cls.classification_report_image(y_train, y_test, y_train, y_train, y_test, y_test)
         _assert_image(const.RESULT_IMAGES["rf_report"])
         _assert_image(const.RESULT_IMAGES["lr_report"])
 
     def test_mismatched_lengths_raise(self, split_data):
-        """Predictions with the wrong length raise ``ValueError``."""
+        """Predictions with the wrong length raise ``ValueError``.
+
+        Args:
+            split_data: tuple ``(x_train, x_test, y_train, y_test)`` from the ``split_data``
+                fixture
+
+        Returns:
+            None (the test fails if ``ValueError`` is not raised)
+        """
         _, _, y_train, y_test = split_data
         with pytest.raises(ValueError):
             cls.classification_report_image(y_train, y_test, y_train[:-1], y_train, y_test, y_test)
@@ -247,19 +454,48 @@ class TestFeatureImportancePlot:
     """Tests for ``feature_importance_plot``."""
 
     def test_saves_plot(self, fitted_rf, split_data, tmp_path):
-        """The plot is written to the requested path."""
+        """The plot is written to the requested path.
+
+        Args:
+            fitted_rf: small fitted ``RandomForestClassifier`` from the ``fitted_rf`` fixture
+            split_data: tuple ``(x_train, x_test, y_train, y_test)`` from the ``split_data``
+                fixture
+            tmp_path: pytest's per-test temporary directory (``pathlib.Path``)
+
+        Returns:
+            None (the test fails with an ``AssertionError`` if a check does not hold)
+        """
         output = tmp_path / "importance.png"
         cls.feature_importance_plot(fitted_rf, split_data[1], str(output))
         _assert_image(output)
 
     def test_creates_missing_parent_directory(self, fitted_rf, split_data, tmp_path):
-        """Missing parent folders of the output path are created."""
+        """Missing parent folders of the output path are created.
+
+        Args:
+            fitted_rf: small fitted ``RandomForestClassifier`` from the ``fitted_rf`` fixture
+            split_data: tuple ``(x_train, x_test, y_train, y_test)`` from the ``split_data``
+                fixture
+            tmp_path: pytest's per-test temporary directory (``pathlib.Path``)
+
+        Returns:
+            None (the test fails with an ``AssertionError`` if a check does not hold)
+        """
         output = tmp_path / "nested" / "dir" / "importance.png"
         cls.feature_importance_plot(fitted_rf, split_data[1], str(output))
         _assert_image(output)
 
     def test_model_without_importances_raises(self, split_data, tmp_path):
-        """Models without ``feature_importances_`` raise ``AttributeError``."""
+        """Models without ``feature_importances_`` raise ``AttributeError``.
+
+        Args:
+            split_data: tuple ``(x_train, x_test, y_train, y_test)`` from the ``split_data``
+                fixture
+            tmp_path: pytest's per-test temporary directory (``pathlib.Path``)
+
+        Returns:
+            None (the test fails if ``AttributeError`` is not raised)
+        """
         x_train, _, y_train, _ = split_data
         model = LogisticRegression(max_iter=500).fit(x_train, y_train)
         with pytest.raises(AttributeError):
@@ -270,7 +506,17 @@ class TestShapSummaryPlot:
     """Tests for ``shap_summary_plot``."""
 
     def test_saves_plot(self, fitted_rf, split_data, tmp_path):
-        """The SHAP summary is written to the requested path."""
+        """The SHAP summary is written to the requested path.
+
+        Args:
+            fitted_rf: small fitted ``RandomForestClassifier`` from the ``fitted_rf`` fixture
+            split_data: tuple ``(x_train, x_test, y_train, y_test)`` from the ``split_data``
+                fixture
+            tmp_path: pytest's per-test temporary directory (``pathlib.Path``)
+
+        Returns:
+            None (the test fails with an ``AssertionError`` if a check does not hold)
+        """
         output = tmp_path / "shap.png"
         cls.shap_summary_plot(fitted_rf, split_data[1].head(30), str(output))
         _assert_image(output)
@@ -280,7 +526,17 @@ class TestRocCurvePlot:
     """Tests for ``roc_curve_plot``."""
 
     def test_saves_plot_with_named_curves(self, fitted_rf, split_data, tmp_path):
-        """A labelled curve is drawn per model and the plot is saved."""
+        """A labelled curve is drawn per model and the plot is saved.
+
+        Args:
+            fitted_rf: small fitted ``RandomForestClassifier`` from the ``fitted_rf`` fixture
+            split_data: tuple ``(x_train, x_test, y_train, y_test)`` from the ``split_data``
+                fixture
+            tmp_path: pytest's per-test temporary directory (``pathlib.Path``)
+
+        Returns:
+            None (the test fails with an ``AssertionError`` if a check does not hold)
+        """
         x_train, x_test, y_train, y_test = split_data
         logistic = LogisticRegression(max_iter=500).fit(x_train, y_train)
         output = tmp_path / "roc.png"
@@ -295,7 +551,15 @@ class TestTrainModels:
     """Tests for ``train_models`` (with the shrunken hyper-parameter search)."""
 
     def test_saves_models_and_images(self, split_data):
-        """Both models and every result image are written."""
+        """Both models and every result image are written.
+
+        Args:
+            split_data: tuple ``(x_train, x_test, y_train, y_test)`` from the ``split_data``
+                fixture
+
+        Returns:
+            None (the test fails with an ``AssertionError`` if a check does not hold)
+        """
         cls.train_models(*split_data)
         for path in const.MODEL_FILES.values():
             assert os.path.getsize(path) > 0
@@ -303,7 +567,15 @@ class TestTrainModels:
             _assert_image(path)
 
     def test_saved_models_predict(self, split_data):
-        """The saved models load with joblib and predict binary labels for every test row."""
+        """The saved models load with joblib and predict binary labels for every test row.
+
+        Args:
+            split_data: tuple ``(x_train, x_test, y_train, y_test)`` from the ``split_data``
+                fixture
+
+        Returns:
+            None (the test fails with an ``AssertionError`` if a check does not hold)
+        """
         _, x_test, _, _ = split_data
         cls.train_models(*split_data)
         for path in const.MODEL_FILES.values():
@@ -312,7 +584,15 @@ class TestTrainModels:
             assert set(predictions) <= {0, 1}
 
     def test_random_forest_beats_chance(self, split_data):
-        """The tuned random forest learns the synthetic signal (accuracy well above chance)."""
+        """The tuned random forest learns the synthetic signal (accuracy well above chance).
+
+        Args:
+            split_data: tuple ``(x_train, x_test, y_train, y_test)`` from the ``split_data``
+                fixture
+
+        Returns:
+            None (the test fails with an ``AssertionError`` if a check does not hold)
+        """
         _, x_test, _, y_test = split_data
         cls.train_models(*split_data)
         model = joblib.load(const.MODEL_FILES["rfc"])
@@ -323,7 +603,15 @@ class TestMain:
     """Tests for ``main`` (the full pipeline on synthetic data)."""
 
     def test_runs_end_to_end(self, csv_path, monkeypatch):
-        """The pipeline produces every EDA image, result image and model."""
+        """The pipeline produces every EDA image, result image and model.
+
+        Args:
+            csv_path: str path of the synthetic csv from the ``csv_path`` fixture
+            monkeypatch: pytest fixture used to point ``constants.DATA_PATH`` at the synthetic csv
+
+        Returns:
+            None (the test fails with an ``AssertionError`` if a check does not hold)
+        """
         monkeypatch.setattr(const, "DATA_PATH", csv_path)
         cls.main()
         artifacts = (
